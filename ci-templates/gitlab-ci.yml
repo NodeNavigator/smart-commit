@@ -1,0 +1,90 @@
+# Smart Commit — Layer 4 CI for GitLab.com (parity with ci-templates/github-actions.yml).
+# Copy into a repo as `.gitlab-ci.yml` (or `include:` it from a central project).
+#
+# This is the gate that `--no-verify` cannot bypass on cloud SaaS: a commit made
+# with --no-verify still runs through this pipeline on the merge request, and the
+# MR cannot merge if it fails (see deploy/gitlab/README.md → "Pipelines must
+# succeed"). It re-runs the SAME validate-*.sh the local hooks use — the single
+# source of truth — by cloning the smart-commit repo, so CI and hooks never drift.
+#
+# REQUIRED CI/CD variables (Group → Settings → CI/CD → Variables):
+#   SMART_COMMIT_REPO   https URL of your internal smart-commit repo
+#   SMART_COMMIT_TOKEN  (only if that repo is private) a read-only deploy/group
+#                       token; mark it Masked. Omit for a public/self repo.
+
+default:
+  image: alpine:3.20
+
+variables:
+  GIT_DEPTH: "0"            # full history — commit-range validation needs it
+  SMART_COMMIT_REPO: "https://gitlab.com/your-org/smart-commit.git"
+
+# Run only on merge request pipelines — that's where the merge check enforces it.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+.smart_commit_setup: &smart_commit_setup
+  - apk add --no-cache git >/dev/null
+  - |
+    # Pass the token as a transient auth header, not embedded in the URL — the
+    # URL form is persisted into /tmp/smart-commit/.git/config on disk.
+    if [ -n "${SMART_COMMIT_TOKEN:-}" ]; then
+      git -c http.extraheader="Authorization: Bearer ${SMART_COMMIT_TOKEN}" \
+        clone --depth 1 "$SMART_COMMIT_REPO" /tmp/smart-commit >/dev/null
+    else
+      git clone --depth 1 "$SMART_COMMIT_REPO" /tmp/smart-commit >/dev/null
+    fi
+  - export SC="/tmp/smart-commit/scripts"
+  - BASE="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-$(git merge-base "origin/$CI_DEFAULT_BRANCH" HEAD)}"
+  - export RANGE="$BASE..$CI_COMMIT_SHA"
+
+stages: [validate]
+
+commit-messages:
+  stage: validate
+  before_script: *smart_commit_setup
+  script:
+    - |
+      rm -f /tmp/flags /tmp/reasons   # runners may be reused — start clean
+      # Validate every commit subject in the MR range against the ONE validator.
+      # The FLAG file (not a variable) carries the result out of the `while`
+      # subshell that the pipe creates under POSIX sh.
+      git log --format='%H %s' "$RANGE" | while IFS=' ' read -r sha subject; do
+        [ -z "$sha" ] && continue
+        if ! printf '%s' "$subject" | "$SC/validate-commit-msg.sh" >/tmp/reasons 2>&1; then
+          echo "✗ $sha: $subject"; cat /tmp/reasons; echo "FLAG" >>/tmp/flags
+        fi
+      done
+      if [ -f /tmp/flags ]; then exit 1; fi
+
+files:
+  stage: validate
+  before_script: *smart_commit_setup
+  script:
+    # Denylisted paths, oversized files, OS junk — same validator as pre-commit.
+    - '"$SC/validate-files.sh" "$RANGE"'
+
+secrets:
+  stage: validate
+  # Same pinned gitleaks release the GitHub template uses — installed into the
+  # default alpine image, rather than depending on a third-party gitleaks image
+  # that may lack git for checkout. Authoritative, unconditional scan (no
+  # graceful-skip, unlike the local hook).
+  before_script:
+    - apk add --no-cache git curl tar coreutils >/dev/null
+    - |
+      set -e
+      ver=8.24.2
+      base="https://github.com/gitleaks/gitleaks/releases/download/v${ver}"
+      tmp=$(mktemp -d); cd "$tmp"
+      curl -sSfL "$base/gitleaks_${ver}_linux_x64.tar.gz" -O
+      curl -sSfL "$base/gitleaks_${ver}_checksums.txt" -O
+      # Verify the tarball against the release's published checksums BEFORE
+      # extracting/running it — never execute an unverified network download.
+      grep "gitleaks_${ver}_linux_x64.tar.gz" "gitleaks_${ver}_checksums.txt" | sha256sum -c -
+      tar -xzf "gitleaks_${ver}_linux_x64.tar.gz" -C /usr/local/bin gitleaks
+      cd - >/dev/null
+  script:
+    - BASE="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-$(git merge-base "origin/$CI_DEFAULT_BRANCH" HEAD)}"
+    - gitleaks detect --source . --log-opts="$BASE..$CI_COMMIT_SHA" -v

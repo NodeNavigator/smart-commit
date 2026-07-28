@@ -1,0 +1,29 @@
+#!/bin/sh
+# pre-commit git hook — Layer 3. Runs the same validate-*.sh scripts
+# pre-push uses (no range arg = staged files), so a commit and a push
+# never disagree. validate-branch.sh is skipped here — branch protection
+# is push-time only.
+
+set -u
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+SC_ENTRYPOINT=1   # scrub inherited SC_* cache/policy env before sourcing (see common.sh)
+. "$SCRIPT_DIR/common.sh"
+
+# Compute the staged-file list once and export it — each validator below
+# runs as its own subprocess and would otherwise re-run this same `git
+# diff` for itself (see sc_staged_files in common.sh).
+SC_STAGED_FILES_CACHE=$(sc_staged_files)
+SC_STAGED_FILES_CACHED=1
+export SC_STAGED_FILES_CACHE SC_STAGED_FILES_CACHED
+
+fail=0
+
+for validator in validate-files.sh validate-secrets.sh validate-generated-files.sh \
+                  validate-language.sh validate-docs.sh validate-api.sh \
+                  validate-migrations.sh validate-lockfiles.sh; do
+    if ! "$SCRIPT_DIR/$validator"; then
+        fail=1
+    fi
+done
+
+exit "$fail"

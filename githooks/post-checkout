@@ -1,0 +1,27 @@
+#!/bin/sh
+# post-checkout git hook — non-blocking early warning for a non-standard
+# branch name, right when it's created (cheapest time to rename it).
+# Never a gate: git has no pre-branch-creation hook to block at, and
+# pre-push (which knows new-vs-existing for real) is the actual check.
+#
+# Args: $1=prev HEAD, $2=new HEAD, $3=1 if a branch checkout (0 = file checkout)
+
+set -u
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+SC_ENTRYPOINT=1   # scrub inherited SC_* cache/policy env before sourcing (see common.sh)
+. "$SCRIPT_DIR/common.sh"
+
+[ "${3:-0}" = "1" ] || exit 0
+[ "$SC_BRANCH_NAME_ENFORCEMENT" = "off" ] && exit 0
+
+branch=$(sc_current_branch)
+
+# Only nag for a branch with no upstream yet — once it's pushed and
+# tracked, pre-push has already had its say; repeating the warning on
+# every later checkout of an old branch would just be noise.
+git rev-parse --verify -q "${branch}@{upstream}" >/dev/null 2>&1 && exit 0
+
+reason=$(sc_branch_name_violation "$branch")
+[ -n "$reason" ] && sc_log_warn "$reason (rename now with 'git branch -m <new-name>' — pushing will be enforced per config/organization-policy.yml: enforce_branch_naming)"
+
+exit 0

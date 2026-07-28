@@ -1,0 +1,14 @@
+#!/bin/sh
+# commit-msg git hook — Layer 3, the real message-format boundary (unlike
+# the Claude PreToolUse gate, which is best-effort). No rules of its own —
+# calls the one shared validator.
+
+HOOK_DIR=$(cd "$(dirname "$0")" && pwd)
+
+if ! reasons=$("$HOOK_DIR/validate-commit-msg.sh" "$1" 2>&1); then
+    echo "Commit rejected — message does not meet the team standard:" >&2
+    echo "$reasons" >&2
+    exit 1
+fi
+
+exit 0

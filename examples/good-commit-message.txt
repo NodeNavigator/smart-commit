@@ -1,0 +1,7 @@
+feat(auth): add OAuth2 PKCE flow for mobile clients
+
+Replaces implicit grant flow which is deprecated by RFC 9126.
+Mobile clients were silently failing on iOS 17+ due to missing
+code_verifier support in the previous implementation.
+
+Closes #234

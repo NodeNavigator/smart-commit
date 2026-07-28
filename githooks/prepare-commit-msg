@@ -1,0 +1,35 @@
+#!/bin/sh
+# prepare-commit-msg git hook — non-blocking UX helper, never a gate
+# (commit-msg is the gate). Pre-fills a Conventional Commits template on a
+# bare `git commit` (no -m). Skips whenever a message source already
+# exists (-m/-F/-c/template/merge/squash).
+
+set -u
+
+msg_file=$1
+msg_source=${2:-}
+
+[ -n "$msg_source" ] && exit 0
+
+branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '')
+issue_ref=""
+case "$branch" in
+    */[A-Za-z][A-Za-z0-9]*-[0-9]*)
+        ticket=$(printf '%s' "$branch" | grep -oE '[A-Za-z]+-[0-9]+' | head -n 1)
+        [ -n "$ticket" ] && issue_ref="Refs: $ticket"
+        ;;
+    */[0-9]*)
+        num=$(printf '%s' "$branch" | grep -oE '[0-9]+' | tail -n 1)
+        [ -n "$num" ] && issue_ref="Closes #$num"
+        ;;
+esac
+
+{
+    printf '\n'
+    printf '# Conventional Commits: type(scope): description\n'
+    printf '# types: feat fix refactor perf docs test style chore build ci revert\n'
+    printf '# example: feat(auth): add OAuth2 PKCE flow for mobile clients\n'
+    [ -n "$issue_ref" ] && printf '#\n# Detected from branch name — add as a footer if relevant: %s\n' "$issue_ref"
+} >> "$msg_file"
+
+exit 0

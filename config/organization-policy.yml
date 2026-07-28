@@ -1,0 +1,37 @@
+# organization-policy.yml — the one place a repo tunes guardrail behavior.
+# Seeded ONCE by install-git-hooks.sh (only if missing), then repo-owned.
+#
+# FORMAT: flat `key: value` and `#` comments ONLY — no nested maps/lists
+# (comma-separated inline strings are the one "list" shape). This is
+# parsed by a POSIX awk/grep fallback when `yq` isn't installed (see
+# sc_policy_get in scripts/common.sh); nested YAML parses fine under `yq`
+# but silently misreads under the fallback — don't add it.
+
+# Branches that reject direct pushes (comma-separated, exact match).
+protected_branches: main,master,production,release,dev,qa,testnet
+
+# Reject any staged/pushed file larger than this many megabytes.
+max_file_size_mb: 5
+
+# Secret scanners — all three graceful-skip (warn) if not installed
+# locally; CI is the hard backstop regardless.
+enable_gitleaks: true
+enable_trufflehog: false
+enable_git_secrets: false
+
+# Per-language lint/format only — no build/test (see smart-commit/README.md).
+enable_lint: true
+
+# Enforcement for the heuristic checks: block | warn | off.
+enforce_docs_warning: warn
+enforce_lockfile_check: block
+enforce_migration_check: block
+enforce_generated_files_check: warn
+enforce_api_check: warn
+
+# New branch names must match <type>/kebab-case-description (types:
+# feature/feat, fix/bugfix, hotfix, release, chore, docs, refactor, test,
+# perf, ci, build, style — see sc_branch_name_violation in common.sh).
+# Only applies to a branch's first push, never retroactively to an
+# existing one. warn | block | off.
+enforce_branch_naming: block

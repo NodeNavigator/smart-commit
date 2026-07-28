@@ -1,0 +1,30 @@
+#!/bin/sh
+# pre-merge-commit git hook — Layer 3. git does NOT run pre-commit when a
+# merge creates a merge commit, so without this a `git merge` could land a
+# secret / denylisted / oversized file with no local scan. Runs the same
+# content validators pre-commit does, against the staged merge result
+# (index vs HEAD = everything the merged branch brings in). Fires only when
+# the merge actually produces a commit (non-fast-forward, no conflicts);
+# pre-push re-checks the full range regardless, so a skipped ff/conflict
+# case is still caught before code leaves the machine.
+
+set -u
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+SC_ENTRYPOINT=1   # scrub inherited SC_* cache/policy env before sourcing (see common.sh)
+. "$SCRIPT_DIR/common.sh"
+
+SC_STAGED_FILES_CACHE=$(sc_staged_files)
+SC_STAGED_FILES_CACHED=1
+export SC_STAGED_FILES_CACHE SC_STAGED_FILES_CACHED
+
+fail=0
+
+for validator in validate-files.sh validate-secrets.sh validate-generated-files.sh \
+                  validate-language.sh validate-docs.sh validate-api.sh \
+                  validate-migrations.sh validate-lockfiles.sh; do
+    if ! "$SCRIPT_DIR/$validator"; then
+        fail=1
+    fi
+done
+
+exit "$fail"

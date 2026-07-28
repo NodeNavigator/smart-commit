@@ -1,0 +1,28 @@
+# Example: a stricter policy for a high-sensitivity repo (e.g. a
+# validator/node repo), contrasted with the org default in
+# config/organization-policy.yml. Copy the fields you want into a target
+# repo's .githooks/config/organization-policy.yml — don't replace the
+# whole file blindly, since the defaults already match most repos.
+
+# Add repo-specific protected branches on top of the org defaults.
+protected_branches: main,master,production,release,mainnet,testnet
+
+# Tighter than the 5MB org default — this repo should never carry large
+# binary artifacts at all.
+max_file_size_mb: 2
+
+# Require all three scanners locally for this repo, not just gitleaks.
+enable_gitleaks: true
+enable_trufflehog: true
+enable_git_secrets: true
+
+enable_lint: true
+
+# Turn the softer heuristics into hard blocks for this repo instead of
+# the org-wide "warn" default — appropriate once a team has verified low
+# false-positive rates for their own codebase.
+enforce_docs_warning: block
+enforce_lockfile_check: block
+enforce_migration_check: block
+enforce_generated_files_check: block
+enforce_api_check: block

@@ -1,0 +1,69 @@
+# github-actions.yml — Layer 4 CI template. Copy into the target repo as
+# .github/workflows/commit-checks.yml (or merge into an existing workflow).
+#
+# Two independent jobs, both required status checks in the branch protection
+# rule / repo ruleset (Layer 5a on GitHub Cloud — see references/enforcement.md):
+#   1. commitlint  — re-validates every commit message on the PR range,
+#      independent of whether the author's local hooks ran at all. This is
+#      what closes the "--no-verify" and "never ran setup" bypass holes.
+#   2. gitleaks    — unconditional secret scan (no graceful-skip here,
+#      unlike the local pre-commit hook — this IS the hard secret gate).
+#
+# Job names below (commitlint, gitleaks) must stay stable — the Layer 5a
+# ruleset references them by name as required checks.
+#
+# Uses the free `gitleaks` CLI directly rather than gitleaks-action@v3,
+# which requires a paid GITLEAKS_LICENSE for organization accounts (not
+# needed for individual accounts). Swap in gitleaks-action@v3 instead if
+# the org already has a license and wants its richer PR annotations.
+
+name: Commit checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history needed to lint the whole PR commit range
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - run: npm install --no-save @commitlint/cli @commitlint/config-conventional
+
+      # Assumes commitlint.config.js (this directory's file, or a repo-local
+      # one extending it) lives at the repo root.
+      - run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so gitleaks scans every commit on the PR, not just the tip
+
+      - name: Install gitleaks (verified)
+        run: |
+          set -euo pipefail
+          ver=8.24.2
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${ver}"
+          tmp=$(mktemp -d); cd "$tmp"
+          curl -sSfL "$base/gitleaks_${ver}_linux_x64.tar.gz" -O
+          curl -sSfL "$base/gitleaks_${ver}_checksums.txt" -O
+          # Verify against the release's published checksums BEFORE extracting/
+          # running — never execute an unverified network download in CI.
+          grep "gitleaks_${ver}_linux_x64.tar.gz" "gitleaks_${ver}_checksums.txt" | sha256sum -c -
+          sudo tar -xzf "gitleaks_${ver}_linux_x64.tar.gz" -C /usr/local/bin gitleaks
+          cd - >/dev/null
+
+      - name: Run gitleaks
+        run: gitleaks detect --source . --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" --verbose

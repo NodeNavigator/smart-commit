@@ -1,0 +1,20 @@
+# Each of these is rejected by scripts/validate-commit-msg.sh — shown
+# with the reason it fails.
+
+fix stuff
+# -> no type(scope): prefix, and too short (9 chars, minimum 10)
+
+update
+# -> banned as the entire subject; says nothing about what changed
+
+WIP: working on login page
+# -> "WIP" is not a valid Conventional Commits type
+
+feat(auth): Added the new login page.
+# -> two problems: past tense ("Added" instead of imperative "add"),
+#    and the description starts with an uppercase letter
+
+fix(api): fix
+# -> matches the format, but the description is exactly one of the
+#    banned junk words ("fix") — say WHAT changed and WHY, not that
+#    something was fixed

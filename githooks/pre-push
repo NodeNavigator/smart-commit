@@ -1,0 +1,102 @@
+#!/bin/sh
+# pre-push git hook — Layer 3.5. Same validate-*.sh scripts as pre-commit,
+# run against the full push range, plus branch protection. No build/test —
+# see smart-commit/README.md. Git feeds "<local ref> <local sha>
+# <remote ref> <remote sha>" lines on stdin, one per ref being pushed.
+
+set -u
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+SC_ENTRYPOINT=1   # scrub inherited SC_* cache/policy env before sourcing (see common.sh)
+. "$SCRIPT_DIR/common.sh"
+
+fail=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ -z "${local_ref:-}" ] && continue
+
+    # Deleting a remote branch — nothing to validate.
+    [ "$local_sha" = "$SC_ZERO_SHA" ] && continue
+
+    is_new=""
+    [ "$remote_sha" = "$SC_ZERO_SHA" ] && is_new="new"
+
+    if ! "$SCRIPT_DIR/validate-branch.sh" "$remote_ref" "$is_new"; then
+        fail=1
+        continue  # rejected branch — no point running content checks
+    fi
+
+    importing_history=0
+    if [ -n "$is_new" ]; then
+        # New branch: diff from the merge-base with a protected branch,
+        # else the whole branch history (empty-tree diff).
+        base=""
+        old_ifs=$IFS
+        IFS=,
+        for b in $SC_PROTECTED_BRANCHES; do
+            IFS=$old_ifs
+            b=$(printf '%s' "$b" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+            if git rev-parse --verify -q "origin/$b" >/dev/null 2>&1; then
+                base=$(git merge-base "origin/$b" "$local_sha" 2>/dev/null)
+                [ -n "$base" ] && break
+            fi
+            IFS=,
+        done
+        IFS=$old_ifs
+        if [ -z "$base" ]; then
+            # No protected branch exists on the remote to diff against —
+            # this range is the entire pre-existing history being pushed
+            # for the first time, not new work.
+            base=$(git hash-object -t tree /dev/null)
+            importing_history=1
+        fi
+        range="$base..$local_sha"
+    else
+        range="$remote_sha..$local_sha"
+    fi
+
+    # Compute the range diff once and export it — each validator below is
+    # its own subprocess and would otherwise re-run this same `git diff`
+    # for itself (see sc_changed_files_in_range in common.sh).
+    SC_RANGE_FILES_CACHE=$(git diff --name-only --diff-filter=ACMR "$range" 2>/dev/null)
+    SC_RANGE_FILES_RANGE="$range"
+    SC_RANGE_FILES_CACHED=1
+    export SC_RANGE_FILES_CACHE SC_RANGE_FILES_RANGE SC_RANGE_FILES_CACHED
+
+    for validator in validate-files.sh validate-secrets.sh validate-generated-files.sh \
+                      validate-language.sh validate-docs.sh validate-api.sh \
+                      validate-migrations.sh validate-lockfiles.sh; do
+        if ! "$SCRIPT_DIR/$validator" "$range"; then
+            fail=1
+        fi
+    done
+
+    # Re-validate every commit message in the range too — a backstop for
+    # commits made with --no-verify or by a tool that skipped commit-msg.
+    # Skipped when importing pre-existing history (see importing_history
+    # above) — same "never retroactive" principle as branch naming
+    # (references/enforcement.md): re-litigating commit messages authored
+    # before this tool existed would block the very first push of an
+    # existing repo. Content checks (secrets, denylist, etc.) above still
+    # run over the same range regardless — only message-format nagging on
+    # old history is skipped.
+    if [ "$importing_history" -eq 1 ]; then
+        skipped=$(git rev-list --count "$range" 2>/dev/null)
+        sc_log_warn "no protected branch found on the remote to diff against — treating this push as importing $skipped pre-existing commit(s); their messages were NOT re-validated (only commits made from here on are checked)"
+    else
+        # `fail=1` inside a `cmd | while read` body would be lost — the
+        # pipe's right side runs in a subshell under POSIX sh. Signal
+        # through stdout instead (same pattern as validate-files.sh /
+        # validate-secrets.sh) and count matches back in this shell.
+        msg_result=$(git log --format='%H %s' "$range" 2>/dev/null | while IFS=' ' read -r sha subject; do
+            [ -z "$sha" ] && continue
+            if ! reasons=$(printf '%s' "$subject" | "$SCRIPT_DIR/validate-commit-msg.sh" 2>&1); then
+                sc_log_fail "commit $sha has an invalid message: $subject"
+                printf '%s\n' "$reasons" >&2
+                printf 'FLAG\n'
+            fi
+        done)
+        [ "$(printf '%s\n' "$msg_result" | grep -c '^FLAG$')" -gt 0 ] && fail=1
+    fi
+done
+
+exit "$fail"
