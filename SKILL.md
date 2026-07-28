@@ -119,7 +119,7 @@ git branch --show-current
 ```
 
 Diff >400 lines: use `--stat` first, then `git diff --cached -- <path>`
-selectively. `.go` files: run `modern-go`'s hygiene pass first.
+selectively.
 
 ## Step 2 — Pre-commit hygiene check
 
