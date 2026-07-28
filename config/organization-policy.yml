@@ -8,7 +8,7 @@
 # but silently misreads under the fallback — don't add it.
 
 # Branches that reject direct pushes (comma-separated, exact match).
-protected_branches: main,master,production,release,dev,qa,testnet
+protected_branches: main,master,production,release,dev,qa,testnet,stage
 
 # Reject any staged/pushed file larger than this many megabytes.
 max_file_size_mb: 5
